@@ -15,6 +15,7 @@ EXPECTED_FILES = [
     "09-edge-cases.mdx",
     "09b-only-code.mdx",
     "09c-empty.mdx",
+    "10-glossary-terms.mdx",
     "11-long-doc.mdx",
 ]
 
@@ -38,15 +39,16 @@ def test_files_utf8():
 
 
 def test_edge_cases_crlf():
-    """Verify 09-edge-cases.mdx contains CRLF line endings."""
+    """Verify 09-edge-cases.mdx has CRLF line endings in all lines."""
     filepath = CORPUS_DIR / "09-edge-cases.mdx"
     with open(filepath, "rb") as f:
         content = f.read()
-    # Check for CRLF
-    assert b"\r\n" in content, "09-edge-cases.mdx não contém CRLF"
-    # Ensure no bare LF without CR (pure LF only)
-    lines = content.split(b"\n")
-    # If there were CRLF, splitting by \n would leave \r at end of lines
-    # Check that some lines have \r\n
-    has_crlf_pair = any(b"\r\n" in line for line in lines[:-1])
-    assert has_crlf_pair, "09-edge-cases.mdx não tem pares CRLF nas linhas"
+    # Verificar que todos os pares de linha são CRLF
+    lines = content.split(b'\r\n')
+    # O último elemento pode ser vazio se o arquivo terminar com newline
+    assert len(lines) > 1, "Arquivo está vazio ou tem apenas uma linha"
+    # Contar LF soltos (não seguidos por CR)
+    bare_lf_count = content.count(b'\n') - content.count(b'\r\n')
+    assert bare_lf_count == 0, f"Encontrados {bare_lf_count} LF soltos em 09-edge-cases.mdx"
+    # Verificação concluída: mais de uma linha após split por CRLF + nenhum LF solto
+    # indica que todas as linhas têm CRLF consistente
