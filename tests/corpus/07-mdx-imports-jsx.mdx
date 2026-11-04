@@ -1,0 +1,30 @@
+# Importações e JSX
+
+```jsx
+import {Tabs, TabItem} from 'ui-components';
+
+<Tabs defaultValue="tab1">
+  <TabItem value="tab1" label="Tab 1">
+    <p>Conteúdo da primeira aba.</p>
+  </TabItem>
+  <TabItem value="tab2" label="Tab 2">
+    <p>Conteúdo da segunda aba.</p>
+  </TabItem>
+</Tabs>
+```
+
+```jsx
+export default function Componente() {
+  return (
+    <div>
+      <h1>Título</h1>
+      <p>Componente com {props.nome}.</p>
+    </div>
+  );
+}
+```
+
+```jsx
+// Comentário {/* */}
+import {Foo} from './foo';
+```
