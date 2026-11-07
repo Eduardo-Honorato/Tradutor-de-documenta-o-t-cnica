@@ -3,6 +3,7 @@ import shutil
 
 import pytest
 
+from src.translate import _translation_cache
 from src.translate_client import CACHE_DIR, _ensure_cache_dir, _os_cache_get, _os_cache_set
 
 
@@ -13,7 +14,8 @@ def isolate_cache(tmp_path):
     O fixture:
     1. Faz backup do cache real (se existir).
     2. Redefine CACHE_DIR para tmp_path do teste.
-    3. Após o teste, restaura o cache real.
+    3. Reinicia o dict _translation_cache de translate.py para estado limpo.
+    4. Após o teste, restaura o cache real.
     """
     # Backup do cache real
     real_cache_dir = CACHE_DIR
@@ -28,6 +30,15 @@ def isolate_cache(tmp_path):
     import src.translate_client as tc_mod
     tc_mod.CACHE_DIR = str(tmp_path / ".translate_cache")
     _ensure_cache_dir(str(tmp_path / ".translate_cache"))
+
+    # --- Novo: resetar o dict global de cache de translate.py ---
+    # Assim cada teste tem cache isolado e ninguém "vaza" traduções para o outro
+    from src.translate import _translation_cache
+    _translation_cache.clear()
+    # Redireciona o _CACHE_DIR de translate.py para o tmp_path
+    import src.translate as t_mod
+    t_mod._CACHE_DIR = tmp_path / ".translate_cache"
+    # --- fim do reset ---
 
     yield
 
@@ -55,3 +66,7 @@ def isolate_cache(tmp_path):
                     shutil.copy2(s, d)
             # Remove o backup
             shutil.rmtree(real_cache_backup, ignore_errors=True)
+
+    # Resetar o dict de cache de translate.py novamente após o teste
+    from src.translate import _translation_cache
+    _translation_cache.clear()

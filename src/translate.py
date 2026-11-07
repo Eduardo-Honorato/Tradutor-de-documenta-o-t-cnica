@@ -7,6 +7,8 @@ Novidades em relação à Etapa 4:
 - Validação pós-tradução com retry e fallback seguro
 - Cache local de traduções por hash
 - Nenhum texto parcial retornado em falha
+- Modo estrito: falhas unidades após retentativas geram (None, report, False)
+- Cache: somente str válidos, gravados após validação; _unit_hash inclui modelo
 """
 
 from __future__ import annotations
@@ -44,10 +46,18 @@ if not _CACHE_DIR.exists():
 _translation_cache: Dict[str, str] = {}
 
 
-def _unit_hash(unit: dict) -> str:
-    """Gera hash a partir do texto da unidade + type para cache consistente."""
-    key_parts = f"{unit['type']}:{unit['text']}"
+def _unit_hash(unit: dict, model: str) -> str:
+    """Gera hash consistente para chave de cache baseado em modelo + tipo + texto.
+
+    Inclui o modelo para que traduções de modelos diferentes não se contaminem.
+    """
+    key_parts = f"{model}:{unit['type']}:{unit['text']}"
     return hashlib.sha256(key_parts.encode("utf-8")).hexdigest()
+
+
+def _get_model() -> str:
+    """Obtém o modelo da ambiente, com fallback."""
+    return os.environ.get("TRANSLATOR_MODEL", "default")
 
 
 def _load_cache() -> None:
@@ -63,11 +73,17 @@ def _load_cache() -> None:
 
 
 def _save_cache() -> None:
-    """Salva cache no disco."""
+    """Salva cache no disco.
+
+    SOMENTE grava traduções str não vazias e após validação ter passado.
+    Nunca grava fallback (None ou texto original após falha do cliente).
+    """
     cache_file = _CACHE_DIR / "cache.json"
+    # Filtra apenas traduções válidas (str não vazio) antes de gravar
+    validas = {k: v for k, v in _translation_cache.items() if isinstance(v, str) and len(v) > 0}
     try:
         with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(_translation_cache, f, ensure_ascii=False, indent=2)
+            json.dump(validas, f, ensure_ascii=False, indent=2)
     except OSError:
         pass
 
@@ -77,10 +93,17 @@ def _in_cache(unit_hash: str) -> Optional[str]:
     return _translation_cache.get(unit_hash)
 
 
-def _store_in_cache(unit_hash: str, translated: str) -> None:
-    """Armazena texto traduzido no cache."""
-    _translation_cache[unit_hash] = translated
-    _save_cache()
+def _store_in_cache(unit_hash: str, translated: str, model: str) -> None:
+    """Armazena texto traduzido no cache APENAS se for str não vazio.
+
+    O parâmetro model é usado apenas para consistência do hash; a gravação
+    efetiva ocorre somente quando a validação da unidade já tiver acontecido
+    sem erros no caller.
+    """
+    if translated and isinstance(translated, str) and len(translated) > 0:
+        _translation_cache[unit_hash] = translated
+        # Grava no disco imediatamente com filtro de válido
+        _save_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +128,15 @@ def translate_file(
         (final_text, report, success)
         - final_text: documento restaurado (None se falhou completamente)
         - report: ValidationReport com issues
-        - success: True se validate_translation() ok (avisos não contam como falha)
+        - success: True apenas se validate_translation() sem erros
+
+    Modo estrito: se qualquer unidade falhar após as retentativas,
+    retorna (None, report, False) com o report listando as unidades
+    que falharam e o motivo (erro, não aviso). Nada é gravado.
+    A tradução rejeitada nunca vaza para o texto final.
+
+    Cache: somente traduções str válidas são gravadas, e somente após
+    a validação da unidade ter passado sem erro. Fallback nunca é gravado.
     """
 
     # Carregar cache
@@ -118,9 +149,10 @@ def translate_file(
     translated_units: Dict[int, str] = {}
     cache_hits = 0
     cache_misses = 0
+    model = _get_model()
 
     for idx, unit in enumerate(doc.translatable_units):
-        unit_hash = _unit_hash(unit)
+        unit_hash = _unit_hash(unit, model)
 
         # Verificar cache
         if use_cache and unit_hash in _translation_cache:
@@ -148,15 +180,17 @@ def translate_file(
             return (None, report, False)
 
         if translated is None:
-            # Em caso de falha total do cliente: manter original
-            translated = original_unit_text
-            # Ainda assim continuar — validação apontará o problema
+            # Falha total do cliente — retornar imediatamente com erro explícito
+            # nunca grava fallback no cache; a unidade com falha não pode vazar
+            # para o texto final. Reporta o erro com código client_failure.
+            report = validate_translation(original_text, {}, doc)
+            report.issues.append(type(
+                "Issue", (), {"severity": "error", "code": "client_failure",
+                              "message": f"translate_with_retry retornou None para unidade {idx}", "units": (idx,)})()
+            )
+            return (None, report, False)
 
         translated_units[idx] = translated
-
-        # Armazena no cache
-        if use_cache:
-            _store_in_cache(unit_hash, translated)
 
     # --- Fase C: restauração e validação ---
     # Aplicar translations
@@ -183,14 +217,14 @@ def translate_file(
             error_units.update(issue.units)
 
         # Re-tentar apenas as unidades com erro
+        # Importante: retraduzir o texto ORIGINAL, não a saída potencialmente ruim
         retry_translated: Dict[int, str] = {}
         for idx in error_units:
             if idx in translated_units:
                 unit = doc.translatable_units[idx]
-                unit_hash = _unit_hash(unit)
-                unit_text = translated_units[idx]
+                unit_text = unit["text"]  # TEXTO ORIGINAL, não translated_units[idx]
 
-                # Retry com o cliente
+                # Retry com o cliente sobre o texto original
                 re_try = translate_with_retry(unit_text, max_retries=max_retries)
                 if re_try is not None:
                     retry_translated[idx] = re_try
@@ -200,7 +234,7 @@ def translate_file(
 
         # Aplicar retry
         if retry_translated:
-            doc_after_apply2 = apply_translations(doc, retry_translated)
+            doc_after_apply2 = apply_translations(doc, {**translated_units, **retry_translated})
             try:
                 final_text = restore(doc_after_apply2)
             except ValueError:
@@ -217,6 +251,11 @@ def translate_file(
         # Se não houve retry (erro nas unidades já tinha sido mantido original), usar report atual
         # O que já temos em report está adequado
 
+    # Modo estrito: se há erros, retornar (None, report, False)
+    # Não permitir que sucessos parciais com erros vazarão
+    if report.errors:
+        return (None, report, False)
+
     # Sucesso: validou ok (pode ter avisos, mas não erros)
     success = report.ok
 
@@ -225,7 +264,6 @@ def translate_file(
 
 # ---------------------------------------------------------------------------Wrapper: grava em pasta de saída, nunca sobrescreve origem
 # ---------------------------------------------------------------------------
-
 
 def write_translation_output(
     original_path: str,
@@ -250,8 +288,8 @@ def write_translation_output(
     """
     # Usar out/ na raiz do projeto se out_dir não informado
     if out_dir is None:
-        _BASE_DIR = Path(__file__).parent
-        out_dir = _BASE_DIR / "out"
+        _BASE_DIR = Path(__file__)
+        out_dir = _BASE_DIR.parent.parent / "out"
 
     orig = Path(original_path).resolve()
     out_path = (out_dir / orig.name).resolve() if out_dir else None
