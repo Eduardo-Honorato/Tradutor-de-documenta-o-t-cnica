@@ -1,3 +1,9 @@
 [tool.pytest]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = ["real: teste que usa o proxy real (RUN_REAL_TRANSLATION=1 para ativar)"]
+
+[project]
+name = "tradutor-docs"
+version = "0.1.0"
+dependencies = ["requests>=2.31"]

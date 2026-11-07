@@ -2,6 +2,7 @@
 .env
 .venv
 .cache
+.translate_cache
 
 # Python
 __pycache__/
@@ -10,7 +11,11 @@ __pycache__/
 *.pyd
 # Spin-off virtual environments
 .env*
+!.env.example
 
 # OS-generated
 .DS_Store
 Thumbs.db
+
+# Output pastas da traducao
+out/
