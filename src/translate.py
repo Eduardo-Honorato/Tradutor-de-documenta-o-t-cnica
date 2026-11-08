@@ -29,7 +29,8 @@ from src.translate_client import translate_with_retry
 
 _BASE_DIR = Path(__file__).parent
 _OUT_DIR = _BASE_DIR / "out"
-_CACHE_DIR = _BASE_DIR / ".translate_cache"
+# _CACHE_DIR deve ficar na raiz do projeto, não em src/ (avoid .parent error same as out_dir)
+_CACHE_DIR = _BASE_DIR.parent / ".translate_cache"
 _GITIGNORE = _BASE_DIR / ".gitignore"
 
 # Garante pastas
@@ -93,17 +94,14 @@ def _in_cache(unit_hash: str) -> Optional[str]:
     return _translation_cache.get(unit_hash)
 
 
-def _store_in_cache(unit_hash: str, translated: str, model: str) -> None:
-    """Armazena texto traduzido no cache APENAS se for str não vazio.
+def _store_in_cache(unit_hash: str, translated: str) -> None:
+    """Armazena texto traduzido no cache de memória APENAS se for str não vazio.
 
-    O parâmetro model é usado apenas para consistência do hash; a gravação
-    efetiva ocorre somente quando a validação da unidade já tiver acontecido
-    sem erros no caller.
+    A gravação no disco (_save_cache) ocorre uma única vez após a validação
+    passar em translate_file, não aqui.
     """
     if translated and isinstance(translated, str) and len(translated) > 0:
         _translation_cache[unit_hash] = translated
-        # Grava no disco imediatamente com filtro de válido
-        _save_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +145,7 @@ def translate_file(
 
     # --- Fase B: tradução de units ---
     translated_units: Dict[int, str] = {}
+    pending_cache: Dict[str, str] = {}
     cache_hits = 0
     cache_misses = 0
     model = _get_model()
@@ -191,6 +190,10 @@ def translate_file(
             return (None, report, False)
 
         translated_units[idx] = translated
+        # Armazenar em pending_cache APENAS se não veio do cache.
+        # Cache hits fazem 'continue' na linha 158, então só chegamos aqui
+        # para unidades traduzidas pelo cliente (cache miss).
+        pending_cache[unit_hash] = translated
 
     # --- Fase C: restauração e validação ---
     # Aplicar translations
@@ -257,6 +260,10 @@ def translate_file(
         return (None, report, False)
 
     # Sucesso: validou ok (pode ter avisos, mas não erros)
+    # Gravar cache: primeiro acumular em pending_cache, então armazenar e salvar
+    for unit_hash, translated in pending_cache.items():
+        _store_in_cache(unit_hash, translated)
+    _save_cache()
     success = report.ok
 
     return (final_text, report, success)

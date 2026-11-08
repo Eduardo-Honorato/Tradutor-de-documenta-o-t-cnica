@@ -354,3 +354,136 @@ def test_cache_no_fallback_stored(monkeypatch, isolate_cache):
 
     # Após a chamada, o cache ainda deve estar vazio (não gravou fallback)
     assert len(_translation_cache) == 0, "Cache não deve conter fallback/None"
+
+
+# ---------------------------------------------------------------------------
+# Novos testes: translate_with_retry sem rede (monkeypatch requests.post e time.sleep)
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_post(status_code, content=None, reasoning_content=None):
+    """Helper para criar um mock de requests.post com status e conteúdo controlados."""
+    import json as _json
+
+    _sc = status_code
+
+    class _MockResponse:
+        status_code = _sc
+
+        def json(self):
+            data = {}
+            if content is not None:
+                data["choices"] = [{"message": {"content": content}}]
+            if reasoning_content is not None:
+                # Simula a presença de reasoning_content na resposta
+                if "choices" not in data:
+                    data["choices"] = []
+                data["choices"].append({
+                    "message": {
+                        "content": content,
+                        "annotations": {"reasoning_content": reasoning_content}
+                    }
+                })
+            return data
+
+    return _MockResponse()
+
+
+def test_translate_with_retry_200_str_content(monkeypatch):
+    """(a) 200 com content str → retorna a str."""
+    import requests
+
+    def mock_post_200_str(url, headers, json, timeout):
+        return _make_mock_post(200, content="Texto traduzido")
+
+    monkeypatch.setattr(requests, "post", mock_post_200_str)
+
+    from src.translate import translate_with_retry
+    result = translate_with_retry("Hello world", max_retries=0)
+    assert isinstance(result, str), f"Esperava str, got {type(result)}"
+    assert result == "Texto traduzido"
+
+
+def test_translate_with_retry_429_then_200(monkeypatch):
+    """(b) 429 e depois 200 → retorna a str, com backoff."""
+    import requests
+    import time
+
+    call_count = {"n": 0}
+
+    def mock_post_429_then_200(url, headers, json, timeout):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # Primeira chamada: 429
+            return _make_mock_post(429)
+        # Segunda chamada: 200
+        return _make_mock_post(200, content="Segundo attempt")
+
+    # Monkeypatch time.sleep para não dormir de verdade
+    original_sleep = time.sleep
+    time.sleep = lambda s: None
+
+    try:
+        monkeypatch.setattr(requests, "post", mock_post_429_then_200)
+        from src.translate import translate_with_retry
+        result = translate_with_retry("Hello world", max_retries=2)
+        assert isinstance(result, str), f"Esperava str, got {type(result)}"
+        assert result == "Segundo attempt"
+    finally:
+        time.sleep = original_sleep
+
+
+def test_translate_with_retry_200_none_reasoning_content(monkeypatch):
+    """(c) 200 com content None e reasoning_content preenchido → retorna None."""
+    import requests
+
+    def mock_post_200_none(url, headers, json, timeout):
+        return _make_mock_post(200, content=None, reasoning_content=" Pensando...")
+
+    monkeypatch.setattr(requests, "post", mock_post_200_none)
+
+    from src.translate import translate_with_retry
+    result = translate_with_retry("Hello world", max_retries=0)
+    assert result is None, f"Esperava None, got {result}"
+
+
+def test_translate_with_retry_400_no_chat_template_kwargs(monkeypatch):
+    """(d) 400 por chat_template_kwargs → reenvia sem ele e retorna a str."""
+    import requests
+
+    call_count = {"n": 0}
+
+    def mock_post_400_then_200(url, headers, json, timeout):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # Primeira chamada: 400 (por chat_template_kwargs)
+            return _make_mock_post(400)
+        # Segunda chamada: 200 (sem chat_template_kwargs no payload)
+        return _make_mock_post(200, content="Sem kwargs")
+
+    monkeypatch.setattr(requests, "post", mock_post_400_then_200)
+
+    from src.translate import translate_with_retry
+    result = translate_with_retry("Hello world", max_retries=2)
+    assert isinstance(result, str), f"Esperava str, got {type(result)}"
+    assert result == "Sem kwargs"
+
+
+def test_translate_with_retry_expanded_output_treated_as_failure(monkeypatch):
+    """(e) saída expandida (>3x tamanho da entrada) → tratada como falha."""
+    import requests
+
+    # Mock que retorna saída 10x maior que a entrada
+    expanded_output = "A" * 400  # 400 chars vs 100 chars input
+
+    def mock_post_expanded(url, headers, json, timeout):
+        return _make_mock_post(200, content=expanded_output)
+
+    monkeypatch.setattr(requests, "post", mock_post_expanded)
+
+    from src.translate import translate_with_retry
+    # Com max_retries=0, deve falhar (tratar como erro de expansão)
+    result = translate_with_retry("Hello world", max_retries=0)
+    # Como a saída tem ~400 chars contra 11 de entrada (3x > 3 e > 80 chars diff),
+    # deve ser tratado como falha e retornar None
+    assert result is None, f"Esperava None (expansão tratada como falha), got {result}"

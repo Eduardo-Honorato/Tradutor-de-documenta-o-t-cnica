@@ -4,7 +4,7 @@ import shutil
 import pytest
 
 from src.translate import _translation_cache
-from src.translate_client import CACHE_DIR, _ensure_cache_dir, _os_cache_get, _os_cache_set
+from src.translate_client import CACHE_DIR, _ensure_cache_dir  # _os_cache_get/set removidos
 
 
 @pytest.fixture(autouse=True, scope="function")
