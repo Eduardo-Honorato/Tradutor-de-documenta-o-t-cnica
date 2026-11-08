@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Tuple
 
 from src.protect import protect, apply_translations, restore
 from src.validate import validate_translation
-from src.translate_client import translate_with_retry, SYSTEM_MSG, PROMPT_VERSION
+from src.translate_client import translate_with_retry, PROMPT_VERSION
 
 # ---------------------------------------------------------------------------
 # Caminhos e configuração
