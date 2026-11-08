@@ -47,12 +47,15 @@ if not _CACHE_DIR.exists():
 _translation_cache: Dict[str, str] = {}
 
 
-def _unit_hash(unit: dict, model: str) -> str:
-    """Gera hash consistente para chave de cache baseado em modelo + tipo + texto.
+def _unit_hash(unit: dict, model: str, prompt_version: str = "") -> str:
+    """Gera hash consistente para chave de cache baseado em modelo + tipo + texto + versão do prompt.
 
     Inclui o modelo para que traduções de modelos diferentes não se contaminem.
+    Inclui a versão do prompt para que mudar o prompt invalide as traduções antigas.
     """
     key_parts = f"{model}:{unit['type']}:{unit['text']}"
+    if prompt_version:
+        key_parts += f":{prompt_version}"
     return hashlib.sha256(key_parts.encode("utf-8")).hexdigest()
 
 
@@ -149,9 +152,11 @@ def translate_file(
     cache_hits = 0
     cache_misses = 0
     model = _get_model()
+    # Versão do prompt de tradução: mudar este valor invalida o cache antigo
+    prompt_version = ""
 
     for idx, unit in enumerate(doc.translatable_units):
-        unit_hash = _unit_hash(unit, model)
+        unit_hash = _unit_hash(unit, model, prompt_version=prompt_version)
 
         # Verificar cache
         if use_cache and unit_hash in _translation_cache:

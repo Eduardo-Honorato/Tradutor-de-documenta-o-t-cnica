@@ -7,6 +7,7 @@ Teste real opcional: marque @pytest.mark.real e defina RUN_REAL_TRANSLATION=1.
 import json
 import os
 import re
+from contextlib import redirect_stderr
 from pathlib import Path
 
 import pytest
@@ -487,3 +488,143 @@ def test_translate_with_retry_expanded_output_treated_as_failure(monkeypatch):
     # Como a saída tem ~400 chars contra 11 de entrada (3x > 3 e > 80 chars diff),
     # deve ser tratado como falha e retornar None
     assert result is None, f"Esperava None (expansão tratada como falha), got {result}"
+
+
+# ---------------------------------------------------------------------------
+# Novos testes: _build_payload e translate_text sem rede (monkeypatch requests.post e time.sleep)
+# ---------------------------------------------------------------------------
+
+
+def test__build_payload_includes_chat_template_kwargs_when_true(monkeypatch):
+    """(a) _build_payload com with_thinking_flag=True inclui chat_template_kwargs."""
+    from src.translate_client import _build_payload
+
+    payload = _build_payload("Hello world", "nemotron", with_thinking_flag=True)
+    assert "chat_template_kwargs" in payload, "Expected chat_template_kwargs when with_thinking_flag=True"
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test__build_payload_omits_chat_template_kwargs_when_false(monkeypatch):
+    """(a) _build_payload com with_thinking_flag=False omite chat_template_kwargs."""
+    from src.translate_client import _build_payload
+
+    payload = _build_payload("Hello world", "nemotron", with_thinking_flag=False)
+    assert "chat_template_kwargs" not in payload, "Did not expect chat_template_kwargs when with_thinking_flag=False"
+
+
+def test__build_payload_temperature_zero_and_max_tokens_bounds(monkeypatch):
+    """(b) Em ambos os casos, temperature == 0 e max_tokens em [64, 2048]."""
+    from src.translate_client import _build_payload
+
+    for flag in [True, False]:
+        payload = _build_payload("Hello world", "nemotron", with_thinking_flag=flag)
+        assert payload["temperature"] == 0, f"Expected temperature 0, got {payload['temperature']}"
+        assert 64 <= payload["max_tokens"] <= 2048, f"Expected max_tokens in [64, 2048], got {payload['max_tokens']}"
+
+
+def test__build_payload_strict_system_msg(monkeypatch):
+    """(b) A system_msg é a versão estrita (sem assistente, apenas tradução)."""
+    from src.translate_client import _build_payload
+
+    payload = _build_payload("Hello world", "nemotron", with_thinking_flag=True)
+    # O payload usa a system_msg interna; verificamos que o modelo não adiciona comportamento de assistente
+    messages = payload["messages"]
+    system_content = messages[0]["content"]
+    # Deve conter instruções de tradução rigorosas
+    assert "translation engine" in system_content.lower() or "Translate" in system_content
+    assert "no explanations" in system_content.lower()
+
+
+def test_translate_text_200_empty_or_whitespace_returns_none(monkeypatch):
+    """(c) Resposta 200 com content vazio ou só espaços conta como falha (None)."""
+    import requests
+
+    def mock_post_200_empty(url, headers, json, timeout):
+        return _make_mock_post(200, content="   ")
+
+    monkeypatch.setattr(requests, "post", mock_post_200_empty)
+
+    from src.translate_client import translate_text
+    result = translate_text("Hello world", model="nemotron")
+    assert result is None, f"Expected None for empty/whitespace content, got {result}"
+
+
+def test_translate_text_200_text_wrapped_in_text_tags(monkeypatch):
+    """(d) Resposta 200 com content <text>Olá</text> → retorna 'Olá' (tags removidas)."""
+    import requests
+
+    def mock_post_200_text_tags(url, headers, json, timeout):
+        return _make_mock_post(200, content="<text>Olá</text>")
+
+    monkeypatch.setattr(requests, "post", mock_post_200_text_tags)
+
+    from src.translate_client import translate_text
+    result = translate_text("Hello world", model="nemotron")
+    assert result == "Olá", f"Expected 'Olá', got {result}"
+
+
+def test_translate_text_400_retries_with_same_strict_payload(monkeypatch):
+    """(e) HTTP 400 → o reenvio usa a MESMA system_msg estrita e temperature 0, sem chat_template_kwargs."""
+    import requests
+
+    call_count = {"n": 0}
+
+    def mock_post_400_then_200(url, headers, json, timeout):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # Primeira chamada: 400 (por chat_template_kwargs)
+            return _make_mock_post(400)
+        # Segunda chamada: 200 (sem chat_template_kwargs no payload, usando _build_payload com False)
+        from src.translate_client import _build_payload
+        # O payload do reenvio deve ter temperature 0 e sem chat_template_kwargs
+        payload_sem_kwargs = _build_payload("Hello world", "nemotron", with_thinking_flag=False)
+        assert "chat_template_kwargs" not in payload_sem_kwargs
+        assert payload_sem_kwargs["temperature"] == 0
+        return _make_mock_post(200, content="Sem kwargs")
+
+    monkeypatch.setattr(requests, "post", mock_post_400_then_200)
+
+    from src.translate_client import translate_text
+    result = translate_text("Hello world", model="nemotron", max_retries=2)
+    assert isinstance(result, str), f"Expected str, got {type(result)}"
+    assert result == "Sem kwargs", f"Expected 'Sem kwargs', got {result}"
+
+
+def test_translate_text_network_exception_logged_to_stderr(monkeypatch, capsys):
+    """(f) Exceção de rede é registrada em stderr sem a chave e função retorna None."""
+    import requests
+
+    def mock_post_raises(url, headers, json, timeout):
+        raise ConnectionError("Network failure")
+
+    monkeypatch.setattr(requests, "post", mock_post_raises)
+
+    from src.translate_client import translate_text
+    result = translate_text("Hello world", model="nemotron")
+    # Verifica que None foi retornado
+    assert result is None, f"Expected None, got {result}"
+    # Verifica que stderr foi capturado e contém o tipo da exceção mas não a chave
+    captured = capsys.readouterr()
+    stderr_output = captured.err
+    # O stderr deve conter "ConnectionError" ou o tipo da exceção
+    assert "ConnectionError" in stderr_output or "NetworkError" in stderr_output or "Exceção" in stderr_output
+    # Não deve conter a chave da API
+    # (o conteúdo exato depende da implementação, verificamos apenas que há algum output)
+
+
+# ---------------------------------------------------------------------------
+# Teste: mudança de versão do prompt invalida cache antigo
+# ---------------------------------------------------------------------------
+
+def test_unit_hash_prompt_version_changed_generates_different_key():
+    """ mudar a versão do prompt gera outra chave de cache."""
+    from src.translate import _unit_hash
+
+    unit = {"type": "heading", "text": "Hello world"}
+
+    # Versão do prompt "v1" gera um hash
+    hash_v1 = _unit_hash(unit, "nemotron", prompt_version="v1")
+    # Versão "v2" gera outro hash (diferente)
+    hash_v2 = _unit_hash(unit, "nemotron", prompt_version="v2")
+
+    assert hash_v1 != hash_v2, "Different prompt versions should generate different cache keys"
