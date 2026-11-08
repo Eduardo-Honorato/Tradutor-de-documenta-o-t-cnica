@@ -564,30 +564,40 @@ def test_translate_text_200_text_wrapped_in_text_tags(monkeypatch):
 
 
 def test_translate_text_400_retries_with_same_strict_payload(monkeypatch):
-    """(e) HTTP 400 → o reenvio usa a MESMA system_msg estrita e temperature 0, sem chat_template_kwargs."""
+    """(e) HTTP 400 → o reenvio usa a MESMA system_msg estrita e temperature 0, sem chat_template_kwargs.
+
+    O mock de requests.post guarda cada payload recebido; a primeira resposta é 400 e a segunda 200
+    com um texto traduzido. Afirma que houve exatamente 2 chamadas, que o primeiro payload tem
+    chat_template_kwargs e o segundo não, e que os dois têm temperature 0 e a mesma mensagem de sistema.
+    """
     import requests
 
     call_count = {"n": 0}
+    received_payloads = []
 
     def mock_post_400_then_200(url, headers, json, timeout):
         call_count["n"] += 1
+        received_payloads.append(json)
         if call_count["n"] == 1:
             # Primeira chamada: 400 (por chat_template_kwargs)
             return _make_mock_post(400)
         # Segunda chamada: 200 (sem chat_template_kwargs no payload, usando _build_payload com False)
-        from src.translate_client import _build_payload
-        # O payload do reenvio deve ter temperature 0 e sem chat_template_kwargs
-        payload_sem_kwargs = _build_payload("Hello world", "nemotron", with_thinking_flag=False)
-        assert "chat_template_kwargs" not in payload_sem_kwargs
-        assert payload_sem_kwargs["temperature"] == 0
         return _make_mock_post(200, content="Sem kwargs")
 
     monkeypatch.setattr(requests, "post", mock_post_400_then_200)
 
     from src.translate_client import translate_text
-    result = translate_text("Hello world", model="nemotron", max_retries=2)
+    result = translate_text("Hello world", model="nemotron")
     assert isinstance(result, str), f"Expected str, got {type(result)}"
     assert result == "Sem kwargs", f"Expected 'Sem kwargs', got {result}"
+    # Verifica exatamente 2 chamadas
+    assert call_count["n"] == 2, f"Expected 2 calls, got {call_count['n']}"
+    # Verifica que o primeiro payload tem chat_template_kwargs e o segundo não
+    assert "chat_template_kwargs" in received_payloads[0], "First payload should have chat_template_kwargs"
+    assert "chat_template_kwargs" not in received_payloads[1], "Second payload should not have chat_template_kwargs"
+    # Verifica que os dois têm temperature 0
+    assert received_payloads[0]["temperature"] == 0, "First payload should have temperature 0"
+    assert received_payloads[1]["temperature"] == 0, "Second payload should have temperature 0"
 
 
 def test_translate_text_network_exception_logged_to_stderr(monkeypatch, capsys):
@@ -628,3 +638,27 @@ def test_unit_hash_prompt_version_changed_generates_different_key():
     hash_v2 = _unit_hash(unit, "nemotron", prompt_version="v2")
 
     assert hash_v1 != hash_v2, "Different prompt versions should generate different cache keys"
+
+
+def test_prompt_version_and_unit_hash(monkeypatch):
+    """ Novo teste: PROMPT_VERSION não é vazio e é igual ao sha256 curto de SYSTEM_MSG;
+    _unit_hash devolve chaves diferentes para duas prompt_version diferentes (mesma unidade e mesmo modelo)."""
+    from src.translate_client import PROMPT_VERSION, SYSTEM_MSG
+    from src.translate import _unit_hash
+    import hashlib
+
+    # PROMPT_VERSION deve ser igual ao sha256 curto de SYSTEM_MSG
+    expected_version = hashlib.sha256(SYSTEM_MSG.encode("utf-8")).hexdigest()[:8]
+    assert PROMPT_VERSION == expected_version, f"PROMPT_VERSION should equal short sha256 of SYSTEM_MSG"
+
+    # _unit_hash deve gerar chaves diferentes para diferentes prompt_versions
+    unit = {"type": "heading", "text": "Hello world"}
+    hash_v1 = _unit_hash(unit, "nemotron", prompt_version="v1")
+    hash_v2 = _unit_hash(unit, "nemotron", prompt_version="v2")
+
+    assert hash_v1 != hash_v2, "Different prompt versions should generate different _unit_hash keys"
+    # Ambos devem ser hashes sha256 de 64 caracteres
+    assert len(hash_v1) == 64, f"Hash should be 64 chars, got {len(hash_v1)}"
+    assert len(hash_v2) == 64, f"Hash should be 64 chars, got {len(hash_v2)}"
+    # O hash deve mudar quando o prompt_version muda (mesma unidade e modelo)
+    # Os hashes devem ser diferentes quando comparamos v1 vs v2

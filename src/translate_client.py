@@ -131,7 +131,7 @@ SYSTEM_MSG = (
 )
 
 # Versão curta do hash da SYSTEM_MSG para invalidação de cache quando o prompt mudar
-_PROMPT_VERSION = hashlib.sha256(SYSTEM_MSG.encode("utf-8")).hexdigest()[:8]
+PROMPT_VERSION = hashlib.sha256(SYSTEM_MSG.encode("utf-8")).hexdigest()[:8]
 
 
 def _cache_key(model: str, unit_text: str) -> str:
@@ -206,7 +206,6 @@ def translate_text(
     api_key: Optional[str] = None,
     timeout: float = 30.0,
     cache_dir: Optional[str] = None,
-    max_retries: int = 0,
 ) -> Optional[str]:
     """Traduz um bloco de texto usando a API da NVIDIA (OpenAI-compatível).
 
@@ -301,20 +300,19 @@ def translate_text(
                 pass
         elif http_status == 400:
             # Se a API recusar chat_template_kwargs, tenta novamente sem usando _build_payload
-            for attempt in range(max_retries + 1):
-                payload_sem_kwargs = _build_payload(text, model, with_thinking_flag=False)
-                try:
-                    response = requests.post(url, headers=headers, json=payload_sem_kwargs, timeout=timeout)
-                    if response.status_code == 200:
-                        data = response.json()
-                        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        if not content or not content.strip():
-                            return None
-                        if content.startswith("<text>") and content.endswith("</text>"):
-                            content = content[6:-7]
-                        return content
-                except Exception:
-                    pass
+            payload_sem_kwargs = _build_payload(text, model, with_thinking_flag=False)
+            try:
+                response = requests.post(url, headers=headers, json=payload_sem_kwargs, timeout=timeout)
+                if response.status_code == 200:
+                    data = response.json()
+                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    if not content or not content.strip():
+                        return None
+                    if content.startswith("<text>") and content.endswith("</text>"):
+                        content = content[6:-7]
+                    return content
+            except Exception:
+                pass
         # Em falha HTTP: registra status e mensagem curta (sem a chave)
         # Não imprime a chave da API em lugar algum
         return None
