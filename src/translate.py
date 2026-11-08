@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Tuple
 
 from src.protect import protect, apply_translations, restore
 from src.validate import validate_translation
-from src.translate_client import translate_with_retry
+from src.translate_client import translate_with_retry, SYSTEM_MSG, _PROMPT_VERSION
 
 # ---------------------------------------------------------------------------
 # Caminhos e configuração
@@ -153,7 +153,7 @@ def translate_file(
     cache_misses = 0
     model = _get_model()
     # Versão do prompt de tradução: mudar este valor invalida o cache antigo
-    prompt_version = ""
+    prompt_version = _PROMPT_VERSION
 
     for idx, unit in enumerate(doc.translatable_units):
         unit_hash = _unit_hash(unit, model, prompt_version=prompt_version)

@@ -4,11 +4,11 @@ import shutil
 import pytest
 
 from src.translate import _translation_cache
-from src.translate_client import CACHE_DIR, _ensure_cache_dir  # _os_cache_get/set removidos
+from src.translate_client import CACHE_DIR, _ensure_cache_dir, SYSTEM_MSG, _PROMPT_VERSION  # _os_cache_get/set removidos
 
 
 @pytest.fixture(autouse=True, scope="function")
-def isolate_cache(tmp_path):
+def isolate_cache(tmp_path, monkeypatch):
     """Isola o diretório de cache para cada teste usando tmp_path.
 
     O fixture:
@@ -16,10 +16,16 @@ def isolate_cache(tmp_path):
     2. Redefine CACHE_DIR para tmp_path do teste.
     3. Reinicia o dict _translation_cache de translate.py para estado limpo.
     4. Após o teste, restaura o cache real.
+    5. Define variáveis de ambiente falsas para testes herméticos.
     """
     # Backup do cache real
     real_cache_dir = CACHE_DIR
     real_cache_backup = os.path.join(tmp_path, ".translate_cache_backup")
+
+    # Define variáveis de ambiente falsas para testes herméticos
+    monkeypatch.setenv("TRANSLATOR_BASE_URL", "https://fake-api.example.com/v1")
+    monkeypatch.setenv("TRANSLATOR_MODEL", "fake-model")
+    monkeypatch.setenv("TRANSLATOR_API_KEY", "fake-key-12345")
 
     # Move o cache real para o backup (se existir)
     if os.path.exists(real_cache_dir):

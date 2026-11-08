@@ -608,8 +608,8 @@ def test_translate_text_network_exception_logged_to_stderr(monkeypatch, capsys):
     stderr_output = captured.err
     # O stderr deve conter "ConnectionError" ou o tipo da exceção
     assert "ConnectionError" in stderr_output or "NetworkError" in stderr_output or "Exceção" in stderr_output
-    # Não deve conter a chave da API
-    # (o conteúdo exato depende da implementação, verificamos apenas que há algum output)
+    # Não deve conter a chave da API falsa definida no conftest
+    assert "fake-key-12345" not in stderr_output, "Fake API key should not appear in stderr"
 
 
 # ---------------------------------------------------------------------------
