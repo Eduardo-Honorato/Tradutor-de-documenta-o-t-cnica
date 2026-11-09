@@ -1,0 +1,28 @@
+---
+title: "JSX Example"
+description: "An example of JSX components with attributes and expressions"
+---
+
+import { Callout } from '@site/src/components/Callout';
+
+# JSX Example
+
+Here's a callout component with props:
+
+<Callout type="info" count={items.length}>
+  Make sure you restart the server after changing the configuration.
+</Callout>
+
+Below is a component with children in prose and a version expression:
+
+<div>
+  The current version is {version}. This is the main content area with some descriptive text about the feature.
+</div>
+
+Here's a paragraph and a list:
+
+This is a paragraph explaining something about the JSX setup.
+
+- First item with **bold text**
+- Second item with a link
+  - Nested item

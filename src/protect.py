@@ -719,11 +719,13 @@ def _apply(
     kinds: Dict[str, str] = {}
     fm_zone_end = 0
     region_pos: List[Tuple[int, int, str]] = []
+    segs: List[Tuple[int, int, int, int, bool]] = []
 
     def emit_gap(a: int, b: int) -> None:
         nonlocal out_len
         if b <= a:
             return
+        segs.append((a, b, out_len, out_len + (b - a), False))
         for rs, re_, key in regions:
             if a <= rs and re_ <= b:
                 region_pos.append((out_len + rs - a, out_len + re_ - a, key))
@@ -740,6 +742,7 @@ def _apply(
         ph = f"{LEFT_GUILLEMET}{prefix}{n}{RIGHT_GUILLEMET}"
         pmap[ph] = text[sp.start:sp.end]
         kinds[ph] = sp.kind
+        segs.append((sp.start, sp.end, out_len, out_len + len(ph), True))
         out.append(ph)
         out_len += len(ph)
         if sp.kind == "front_matter":
@@ -747,7 +750,23 @@ def _apply(
         pos = sp.end
     emit_gap(pos, len(text))
     if len(region_pos) != len(regions):
-        raise AssertionError("valor do front matter nao encontrado (bug interno)")
+        # Valor do front matter com trecho protegido no meio (ex.: codigo inline
+        # no title): leva as bordas da regiao do texto original para o protegido.
+        region_pos = []
+        for rs, re_, key in regions:
+            o_start = o_end = None
+            for oa, ob, pa, pb, is_span in segs:
+                if o_start is None and oa <= rs < ob:
+                    if is_span and rs != oa:
+                        break
+                    o_start = pa if is_span else pa + (rs - oa)
+                if o_end is None and oa < re_ <= ob:
+                    if is_span and re_ != ob:
+                        break
+                    o_end = pb if is_span else pa + (re_ - oa)
+            if o_start is None or o_end is None or o_end < o_start:
+                raise AssertionError("valor do front matter nao encontrado (bug interno)")
+            region_pos.append((o_start, o_end, key))
     return "".join(out), pmap, kinds, fm_zone_end, sorted(region_pos)
 
 
