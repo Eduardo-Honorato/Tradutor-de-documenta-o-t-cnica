@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -45,6 +46,33 @@ if not _CACHE_DIR.exists():
 # ---------------------------------------------------------------------------
 
 _translation_cache: Dict[str, str] = {}
+
+
+def _normalize_title_text(text: str) -> str:
+    """Normaliza texto de título para consistência: minúsculas e espaços colapsados."""
+    # Remover markup de título se presente (ex: "# Título" -> "Título")
+    cleaned = re.sub(r"^#+\s*", "", text)
+    # Minúsculas e colapso de espaços
+    return re.sub(r"\s+", " ", cleaned.strip().lower())
+
+
+# Título: cache de tradução consistente para títulos (frontmatter e H1)
+# Normaliza o texto de origem (minúsculas, espaços colapsados) e guarda a primeira
+# tradução aceita para reutilização em unidades de título iguais dentro do mesmo arquivo.
+# Este cache é criado localmente em translate_file() para ser válido apenas naquele arquivo.
+
+
+def _is_title_unit(unit: dict) -> bool:
+    """Título = unidade com type 'title' (title do frontmatter e todos os headings)."""
+    return unit.get("type") == "title"
+    text = unit.get("text", "")
+    # Headings começam com # ou têm tipo "heading"
+    if unit_type == "heading" or re.match(r"^#+\s", text):
+        return True
+    # Frontmatter title field
+    if re.match(r"^title:\s", text, re.IGNORECASE):
+        return True
+    return False
 
 
 def _unit_hash(unit: dict, model: str, prompt_version: str = "") -> str:
@@ -155,6 +183,9 @@ def translate_file(
     # Versão do prompt de tradução: mudar este valor invalida o cache antigo
     prompt_version = PROMPT_VERSION
 
+    # Cache local de traduções de título, válido apenas para este arquivo
+    title_translation_cache: Dict[str, str] = {}
+
     for idx, unit in enumerate(doc.translatable_units):
         unit_hash = _unit_hash(unit, model, prompt_version=prompt_version)
 
@@ -165,6 +196,15 @@ def translate_file(
             continue
 
         cache_misses += 1
+
+        # Consistencia de titulos: se for unidade de titulo, verificar cache por
+        # texto normalizado (minusculas, espacos colapsados)
+        if _is_title_unit(unit):
+            normalized = _normalize_title_text(unit["text"])
+            if normalized in title_translation_cache:
+                translated_units[idx] = title_translation_cache[normalized]
+                cache_hits += 1
+                continue
 
         # Traduzir unit
         original_unit_text = unit["text"]
@@ -195,6 +235,10 @@ def translate_file(
             return (None, report, False)
 
         translated_units[idx] = translated
+        # Se foi traduzida com sucesso e e unidade de titulo, guardar no cache de consistencia
+        if _is_title_unit(unit):
+            normalized = _normalize_title_text(original_unit_text)
+            title_translation_cache[normalized] = translated
         # Armazenar em pending_cache APENAS se não veio do cache.
         # Cache hits fazem 'continue' na linha 158, então só chegamos aqui
         # para unidades traduzidas pelo cliente (cache miss).
