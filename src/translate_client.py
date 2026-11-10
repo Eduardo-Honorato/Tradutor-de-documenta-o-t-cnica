@@ -13,10 +13,47 @@ import sys
 import hashlib
 import json
 import os
-import time
 import re
 from typing import Optional
 from typing import List, Tuple
+
+import time
+
+# ---------------------------------------------------------------------------
+# Redação de segredos — substitui valores de chave API por ***
+# ---------------------------------------------------------------------------
+
+# Lê a chave real do ambiente (nunca hardcoded); usa-a para redigir logs.
+_REAL_API_KEY = os.environ.get("TRANSLATOR_API_KEY", "") or ""
+
+
+def redact_secrets(text: str) -> str:
+    """Substitui segredos por *** antes de imprimir/registrar.
+
+    Redige:
+      (a) o valor real da TRANSLATOR_API_KEY quando existir e não estiver vazio;
+      (b) o padrão nvapi-[A-Za-z0-9_-]+;
+      (c) o padrão Bearer <qualquer-coisa>.
+    Esta função deve ser chamada ANTES de qualquer truncamento ([:120]),
+    pois a chave pode ter exatamente 120 caracteres e cortar no meio deixaria
+    um pedaço dela exposto.
+    """
+    if not text:
+        return text
+
+    result = text
+
+    # (a) Substitui o valor real da chave (se definido)
+    if _REAL_API_KEY:
+        result = result.replace(_REAL_API_KEY, "***")
+
+    # (b) Substitui o padrão nvapi- seguido de caracteres alfanuméricos/underline/hífen
+    result = re.sub(r"nvapi-[A-Za-z0-9_-]+", "***", result)
+
+    # (c) Substitui Bearer <qualquer-coisa> (um ou mais caracteres não-espaço)
+    result = re.sub(r"Bearer\s+\S+", "Bearer ***", result)
+
+    return result
 
 # ---------------------------------------------------------------------------
 # Loader simples de .env (sem python-dotenv)
@@ -392,6 +429,10 @@ def translate_text(
     except Exception as e:
         # Registra o tipo da exceção em stderr e, em falha HTTP, o status code
         # e os primeiros 120 caracteres do corpo. Nunca a chave nem os headers.
+        # Aplicamos redaction ANTES do truncamento [:120], pois a chave pode ter
+        # exatamente 120 caracteres e cortar no meio deixaria um pedaço exposto.
+        mensagem = f"[translate_client] Exceção: {type(e).__name__}: {str(e)[:120]}"
+        mensagem = redact_secrets(mensagem)
         if http_status is not None:
             body_preview = ""
             try:
@@ -399,9 +440,11 @@ def translate_text(
                 body_preview = body_text[:120]
             except Exception:
                 pass
-            print(f"[translate_client] Erro HTTP {http_status}: {body_preview}", file=sys.stderr)
+            erro_http = f"[translate_client] Erro HTTP {http_status}: {body_preview}"
+            erro_http = redact_secrets(erro_http)
+            print(erro_http, file=sys.stderr)
         else:
-            print(f"[translate_client] Exceção: {type(e).__name__}: {str(e)[:120]}", file=sys.stderr)
+            print(mensagem, file=sys.stderr)
         return None
 
     return None

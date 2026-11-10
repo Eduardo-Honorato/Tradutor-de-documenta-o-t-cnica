@@ -22,6 +22,7 @@ sys.path.insert(0, str(PROJETO / "scripts"))
 
 from src import translate as T  # noqa: E402
 from src.protect import protect  # noqa: E402
+from src.translate_client import redact_secrets  # noqa: E402
 
 
 IGNORAR = {"node_modules", "out", ".git", ".translate_cache"}
@@ -123,7 +124,7 @@ def traduzir_arquivo(caminho, raiz, out_raiz, max_retries, use_cache, qualidade)
                     from checar_qualidade import checar
                     r["avisos"] = checar(texto, final)
     except Exception as e:
-        r["motivo"] = f"{type(e).__name__}: {e}"
+        r["motivo"] = redact_secrets(f"{type(e).__name__}: {e}")
     finally:
         T.translate_with_retry = original_retry
         r["chamadas"] = contador["n"]
@@ -173,7 +174,7 @@ def main(argv=None):
         print(f"[{i}/{len(arquivos)}] {marca} {r['rel']} "
               f"({r['chamadas']} chamadas, {r['tempo']:.1f}s)", flush=True)
         if not r["ok"]:
-            print(f"        motivo: {r['motivo']}", flush=True)
+            print(f"        motivo: {redact_secrets(r['motivo'])}", flush=True)
 
     total = time.time() - inicio
     falhas = [r for r in resultados if not r["ok"]]
@@ -191,7 +192,7 @@ def main(argv=None):
     if falhas:
         print("falhas:")
         for r in falhas:
-            print(f" - {r['rel']}: {r['motivo']}")
+            print(f" - {r['rel']}: {redact_secrets(r['motivo'])}")
         return 1
     return 0
 
