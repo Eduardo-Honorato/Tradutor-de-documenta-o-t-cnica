@@ -1,0 +1,20 @@
+---
+title: "Using the `fetch` helper"
+description: "Learn how to call the API with the fetch helper."
+---
+
+# Using the `fetch` helper
+
+## Endpoints
+
+| Endpoint | Description |
+| -------- | ----------- |
+| `/api/users` | Get all users from the [users guide](https://example.com/docs/users). |
+| `/api/docs` | View the [documentation](https://example.com/docs). |
+
+![Dashboard overview](https://example.com/dashboard.png)
+
+```javascript
+const response = await fetch('/api/data');
+const data = await response.json();
+```

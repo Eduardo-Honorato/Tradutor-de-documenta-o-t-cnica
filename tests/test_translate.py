@@ -4,6 +4,7 @@ Testes unitários com cliente mockado — nenhum chamada real à API.
 Teste real opcional: marque @pytest.mark.real e defina RUN_REAL_TRANSLATION=1.
 """
 
+import copy
 import json
 import os
 import re
@@ -255,7 +256,7 @@ def test_cache_client_returns_none(monkeypatch, isolate_cache):
     """(a) Cliente devolve None para uma unidade → (None, report, False)."""
     from src.translate import translate_with_retry
 
-    # Mock que devolve None (falha total do cliente)
+    # Mock que devolve None (falta total do cliente)
     def mock_none_return(text_to_translate, max_retries=2):
         return None
 
@@ -340,7 +341,7 @@ def test_cache_no_fallback_stored(monkeypatch, isolate_cache):
     from src.translate import translate_with_retry
     from src.translate import _translation_cache
 
-    # Verificamos iniciaialmente que o cache está vazio
+    # Verificamos iniciaionalmente que o cache está vazio
     assert len(_translation_cache) == 0
 
     # Mock que tenta retornar None (falha do cliente)
@@ -491,7 +492,6 @@ def test_translate_with_retry_expanded_output_treated_as_failure(monkeypatch):
 # ---------------------------------------------------------------------------
 # Novos testes: _build_payload e translate_text sem rede (monkeypatch requests.post e time.sleep)
 # ---------------------------------------------------------------------------
-
 
 def test__build_payload_includes_chat_template_kwargs_when_true(monkeypatch):
     """(a) _build_payload com with_thinking_flag=True inclui chat_template_kwargs."""
@@ -792,10 +792,16 @@ def test_few_shot_changes_prompt_version():
 
     Isso verifica que a versão do prompt é calculada baseado em SYSTEM_MSG +
     FEW_SHOT, então alterar FEW_SHOT deve mudar o PROMPT_VERSION.
+
+    Usa snapshot: o início do teste captura o estado atual e o final
+    verifica que FEW_SHOT não foi modificado.
     """
     from src.translate_client import _compute_prompt_version, PROMPT_VERSION, SYSTEM_MSG, FEW_SHOT
     import hashlib
     import json
+
+    # Snapshot: captura o estado atual de FEW_SHOT
+    antes = copy.deepcopy(FEW_SHOT)
 
     # Calcula o expected version com a configuração atual
     expected_version = _compute_prompt_version(SYSTEM_MSG, FEW_SHOT)
@@ -806,7 +812,7 @@ def test_few_shot_changes_prompt_version():
     modified_few_shot = [
         {"role": "user", "content": "<text>Getting Started</text>"},
         {"role": "assistant", "content": "Primeiros passos modificados"},
-        {"role": "user", "content": "<text>Open ⟦P1⟧ and add the line below."},
+        {"role": "user", "content": "<text>Open ⟦P1⟧ and add the line below.</text>"},
         {"role": "assistant", "content": "Abra ⟦P1⟧ e adicione a linha abaixo."},
         {"role": "user", "content": "<text>Pass the ⟦P1⟧ argument to skip validation.</text>"},
         {"role": "assistant", "content": "Passe o argumento ⟦P1⟧ para ignorar a validação."},
@@ -817,11 +823,4 @@ def test_few_shot_changes_prompt_version():
     assert modified_version != PROMPT_VERSION, "Changing FEW_SHOT should change PROMPT_VERSION"
 
     # Não altere o FEW_SHOT global - ele permanece intacto
-    assert FEW_SHOT == [
-        {"role": "user", "content": "<text>Getting Started</text>"},
-        {"role": "assistant", "content": "Primeiros passos"},
-        {"role": "user", "content": "<text>Open ⟦P1⟧ and add the line below.</text>"},
-        {"role": "assistant", "content": "Abra ⟦P1⟧ e adicione a linha abaixo."},
-        {"role": "user", "content": "<text>Pass the ⟦P1⟧ argument to skip validation.</text>"},
-        {"role": "assistant", "content": "Passe o argumento ⟦P1⟧ para ignorar a validação."},
-    ]
+    assert FEW_SHOT == antes, "FEW_SHOT global não deve ter sido modificado"
