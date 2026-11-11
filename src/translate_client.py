@@ -27,25 +27,33 @@ import time
 _REAL_API_KEY = os.environ.get("TRANSLATOR_API_KEY", "") or ""
 
 
-def redact_secrets(text: str) -> str:
+def redact_secrets(text) -> str:
     """Substitui segredos por *** antes de imprimir/registrar.
 
     Redige:
       (a) o valor real da TRANSLATOR_API_KEY quando existir e não estiver vazio;
       (b) o padrão nvapi-[A-Za-z0-9_-]+;
       (c) o padrão Bearer <qualquer-coisa>.
-    Esta função deve ser chamada ANTES de qualquer truncamento ([:120]),
-    pois a chave pode ter exatamente 120 caracteres e cortar no meio deixaria
-    um pedaço dela exposto.
+    A entrada é convertida com str() antes do processamento, entao
+    esta funcao nunca levanta excecao por receber um tipo nao-string
+    (ex.: redact_secrets(report) onde report e um objeto).
+    Esta funcao deve ser chamada ANTES de qualquer truncamento ([:120]),
+    pois a chave pode ter exatamente 70 caracteres e caber inteira antes do corte;
+    a redaction deve acontecer primeiro para garantir que a chave seja sempre substituida.
     """
-    if not text:
-        return text
+    # Converte para str antes de qualquer processamento, para que o aceite
+    # qualquer tipo de entrada (objetos, numeros, etc.) sem levantar exceao.
+    texto = str(text)
+    if not texto:
+        return texto
 
-    result = text
+    result = texto
 
     # (a) Substitui o valor real da chave (se definido)
-    if _REAL_API_KEY:
-        result = result.replace(_REAL_API_KEY, "***")
+    chave_atual = os.environ.get("TRANSLATOR_API_KEY", "") or ""
+    for segredo in sorted({chave_atual, _REAL_API_KEY}, key=len, reverse=True):
+        if segredo:
+            result = result.replace(segredo, "***")
 
     # (b) Substitui o padrão nvapi- seguido de caracteres alfanuméricos/underline/hífen
     result = re.sub(r"nvapi-[A-Za-z0-9_-]+", "***", result)
