@@ -115,3 +115,45 @@ def test_verificar_nao_imprime_a_chave(monkeypatch, tmp_path, capsys):
     texto = capturado.out + capturado.err
     _sem_vazamento(texto, FAKE_NVAPI)
     assert "***" in texto
+
+# ---------------------------------------------------------------------------
+# Ordem da redacao dentro de translate_text: redigir ANTES de truncar em 120.
+# Chave falsa SEM prefixo nvapi-: so o valor exato a redige, entao um pedaco
+# cortado dela nao seria redigido se o corte viesse antes.
+# ---------------------------------------------------------------------------
+import pytest
+
+
+def _preparar_ambiente(monkeypatch):
+    import time
+    import src.translate_client as C
+
+    monkeypatch.setenv("TRANSLATOR_API_KEY", FAKE_PLAIN)
+    monkeypatch.setenv("TRANSLATOR_BASE_URL", "https://exemplo.invalid/v1")
+    monkeypatch.setenv("TRANSLATOR_MODEL", "modelo-teste")
+    monkeypatch.setattr(C, "_REAL_API_KEY", FAKE_PLAIN)
+    monkeypatch.setattr(time, "sleep", lambda *a, **k: None)
+
+
+def _chamar_traducao(monkeypatch, falso_post):
+    import requests
+    from src.translate import translate_with_retry
+
+    monkeypatch.setattr(requests, "post", falso_post)
+    return translate_with_retry("Hello world", max_retries=0)
+
+
+@pytest.mark.parametrize("pos", [10, 100])
+def test_excecao_com_chave_e_redigida_antes_do_corte(monkeypatch, capsys, pos):
+    _preparar_ambiente(monkeypatch)
+
+    def falso_post(*args, **kwargs):
+        raise Exception("a" * pos + FAKE_PLAIN)
+
+    _chamar_traducao(monkeypatch, falso_post)
+    saida = capsys.readouterr()
+    texto = saida.out + saida.err
+    assert "[translate_client]" in texto
+    _sem_vazamento(texto, FAKE_PLAIN)
+    if pos == 10:
+        assert "***" in texto
