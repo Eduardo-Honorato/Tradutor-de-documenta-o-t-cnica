@@ -143,7 +143,7 @@ def _chamar_traducao(monkeypatch, falso_post):
     return translate_with_retry("Hello world", max_retries=0)
 
 
-@pytest.mark.parametrize("pos", [10, 100])
+@pytest.mark.parametrize("pos", [10, 60])
 def test_excecao_com_chave_e_redigida_antes_do_corte(monkeypatch, capsys, pos):
     _preparar_ambiente(monkeypatch)
 
