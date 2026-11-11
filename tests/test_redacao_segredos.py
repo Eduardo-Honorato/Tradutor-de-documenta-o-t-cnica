@@ -157,3 +157,29 @@ def test_excecao_com_chave_e_redigida_antes_do_corte(monkeypatch, capsys, pos):
     _sem_vazamento(texto, FAKE_PLAIN)
     if pos == 10:
         assert "***" in texto
+
+
+@pytest.mark.parametrize("pos", [10, 100])
+def test_corpo_http_com_chave_e_redigido_antes_do_corte(monkeypatch, capsys, pos):
+    _preparar_ambiente(monkeypatch)
+    corpo = "a" * pos + FAKE_PLAIN
+
+    class RespostaInvalida:
+        # Status 200 com corpo que nao e JSON: o erro acontece DEPOIS de ler o
+        # status, que e o unico caminho que imprime o preview do corpo.
+        status_code = 200
+        text = corpo
+
+        def json(self):
+            raise ValueError("corpo invalido")
+
+    def falso_post(*args, **kwargs):
+        return RespostaInvalida()
+
+    _chamar_traducao(monkeypatch, falso_post)
+    saida = capsys.readouterr()
+    texto = saida.out + saida.err
+    assert "Erro HTTP 200" in texto
+    _sem_vazamento(texto, FAKE_PLAIN)
+    if pos == 10:
+        assert "***" in texto
