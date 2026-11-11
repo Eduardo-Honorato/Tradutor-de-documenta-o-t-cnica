@@ -360,8 +360,13 @@ def translate_text(
 
     url = _build_url(final_base, "chat/completions")
 
+    # Construa o header de autorização com a chave do ambiente.
+    # O valor será usado na requisição HTTP; a redaction de segredos é aplicada
+    # apenas quando o header for impresso/registrado em logs/stderr.
+    _api_key = os.environ.get("TRANSLATOR_API_KEY", "")
+    _auth_value = f"Bearer {_api_key}" if _api_key else ""
     headers = {
-        "Authorization": f"Bearer {os.environ.get('TRANSLATOR_API_KEY', '')}",
+        "Authorization": _auth_value,
         "Content-Type": "application/json",
     }
 
@@ -430,14 +435,18 @@ def translate_text(
         # Registra o tipo da exceção em stderr e, em falha HTTP, o status code
         # e os primeiros 120 caracteres do corpo. Nunca a chave nem os headers.
         # Aplicamos redaction ANTES do truncamento [:120], pois a chave pode ter
-        # exatamente 120 caracteres e cortar no meio deixaria um pedaço exposto.
-        mensagem = f"[translate_client] Exceção: {type(e).__name__}: {str(e)[:120]}"
-        mensagem = redact_secrets(mensagem)
+        # exatamente 70 caracteres e caber inteira antes do corte; a redaction
+        # deve acontecer primeiro para garantir que a chave seja sempre substituida.
+        mensagem_sem_redacao = f"[translate_client] Exceção: {type(e).__name__}: {str(e)}"
+        mensagem = redact_secrets(mensagem_sem_redacao)
+        mensagem = mensagem[:120]
         if http_status is not None:
             body_preview = ""
             try:
                 body_text = response.text or ""
-                body_preview = body_text[:120]
+                # Aplicamos redaction PRIMEIRO no corpo completo, antes do truncamento
+                body_sem_redacao = redact_secrets(body_text)
+                body_preview = body_sem_redacao[:120]
             except Exception:
                 pass
             erro_http = f"[translate_client] Erro HTTP {http_status}: {body_preview}"
